@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bézier Rope Physics</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #222; color: white; font-family: sans-serif; }
+        canvas { display: block; }
+        #instruction { position: absolute; top: 20px; left: 20px; pointer-events: none; }
+    </style>
+</head>
+<body>
+    <div id="instruction">Move Mouse or Tilt Phone</div>
+    <canvas id="canvas"></canvas>
+
+<script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+
+    // Resize handling
+    let width, height;
+    function resize() {
+        width = canvas.width = window.innerWidth;
+        height = canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    // Configuration
+    const springK = 0.05;  // Stiffness
+    const damping = 0.90;  // Friction
+    
+    // Points
+    // P0: Start (Fixed Top)
+    // P3: End (Fixed Bottom)
+    // P1, P2: Control Points (Move with physics)
+    let p1 = { x: 0, y: 0, vx: 0, vy: 0 }; 
+    let p2 = { x: 0, y: 0, vx: 0, vy: 0 };
+    
+    // Input Target (Where the mouse/tilt wants the rope to go)
+    let target = { x: 0, y: 0 };
+
+    // --- 1. Handle Input ---
+    
+    // Desktop: Mouse
+    window.addEventListener('mousemove', (e) => {
+        target.x = e.clientX - width / 2; // Center relative
+        target.y = e.clientY - height / 2;
+    });
+
+    // Mobile: Gyroscope (Android/iOS Web)
+    window.addEventListener('deviceorientation', (e) => {
+        // e.gamma is left/right tilt (-90 to 90)
+        // e.beta is front/back tilt
+        target.x = e.gamma * 5; 
+        target.y = (e.beta - 45) * 5;
+    });
+
+    // --- 2. Physics Engine ---
+    function updatePhysics() {
+        // Define where P1 and P2 *want* to be based on target
+        // P1 wants to be 33% down, slightly shifted by input
+        const p1TargetX = (width / 2) + target.x * 0.5;
+        const p1TargetY = (height * 0.33) + target.y * 0.5;
+        
+        // P2 wants to be 66% down, slightly shifted by input
+        const p2TargetX = (width / 2) + target.x * 0.8;
+        const p2TargetY = (height * 0.66) + target.y * 0.8;
+
+        // Apply Spring Force to P1
+        const ax1 = -springK * (p1.x - p1TargetX) - (1 - damping) * p1.vx; // simplified damping
+        const ay1 = -springK * (p1.y - p1TargetY) - (1 - damping) * p1.vy;
+        p1.vx += ax1;
+        p1.vy += ay1;
+        p1.x += p1.vx;
+        p1.y += p1.vy;
+
+        // Apply Spring Force to P2
+        const ax2 = -springK * (p2.x - p2TargetX) - (1 - damping) * p2.vx;
+        const ay2 = -springK * (p2.y - p2TargetY) - (1 - damping) * p2.vy;
+        p2.vx += ax2;
+        p2.vy += ay2;
+        p2.x += p2.vx;
+        p2.y += p2.vy;
+    }
+
+    // --- 3. Math Helpers ---
+    function getBezierPoint(t, p0, p1, p2, p3) {
+        const mt = 1 - t;
+        const mt2 = mt * mt;
+        const mt3 = mt2 * mt;
+        const t2 = t * t;
+        const t3 = t2 * t;
+
+        // B(t) Formula
+        const x = mt3 * p0.x + 3 * mt2 * t * p1.x + 3 * mt * t2 * p2.x + t3 * p3.x;
+        const y = mt3 * p0.y + 3 * mt2 * t * p1.y + 3 * mt * t2 * p2.y + t3 * p3.y;
+        return { x, y };
+    }
+
+    function getTangent(t, p0, p1, p2, p3) {
+        const mt = 1 - t;
+        // Derivative Formula B'(t)
+        // x' = 3(1-t)^2(p1x - p0x) + 6(1-t)t(p2x - p1x) + 3t^2(p3x - p2x)
+        const dx = 3 * mt * mt * (p1.x - p0.x) + 6 * mt * t * (p2.x - p1.x) + 3 * t * t * (p3.x - p2.x);
+        const dy = 3 * mt * mt * (p1.y - p0.y) + 6 * mt * t * (p2.y - p1.y) + 3 * t * t * (p3.y - p2.y);
+        
+        // Normalize
+        const len = Math.sqrt(dx * dx + dy * dy);
+        return { x: dx / len, y: dy / len };
+    }
+
+    // --- 4. Render Loop ---
+    function loop() {
+        ctx.clearRect(0, 0, width, height);
+
+        // Define Fixed Points
+        const p0 = { x: width / 2, y: 50 };        // Top Fixed
+        const p3 = { x: width / 2, y: height - 50 }; // Bottom Fixed
+
+        // Update Physics
+        updatePhysics();
+
+        // Draw Guide Lines (Gray) - Optional visualization
+        ctx.beginPath();
+        ctx.strokeStyle = "rgba(100,100,100, 0.3)";
+        ctx.moveTo(p0.x, p0.y);
+        ctx.lineTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.lineTo(p3.x, p3.y);
+        ctx.stroke();
+
+        // Draw Control Points (Red Circles)
+        ctx.fillStyle = "#ff4444";
+        [p1, p2].forEach(p => {
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 6, 0, Math.PI * 2);
+            ctx.fill();
+        });
+
+        // Draw Bézier Curve (White Rope)
+        ctx.beginPath();
+        ctx.strokeStyle = "white";
+        ctx.lineWidth = 4;
+        ctx.moveTo(p0.x, p0.y);
+        // Using built-in canvas bezier for rendering smoothness, 
+        // but we calculated positions manually above.
+        ctx.bezierCurveTo(p1.x, p1.y, p2.x, p2.y, p3.x, p3.y);
+        ctx.stroke();
+
+        // Draw Tangents (Yellow Lines)
+        ctx.strokeStyle = "yellow";
+        ctx.lineWidth = 2;
+        for (let t = 0.1; t < 1.0; t += 0.1) {
+            const pos = getBezierPoint(t, p0, p1, p2, p3);
+            const tan = getTangent(t, p0, p1, p2, p3);
+            
+            ctx.beginPath();
+            ctx.moveTo(pos.x, pos.y);
+            ctx.lineTo(pos.x + tan.x * 20, pos.y + tan.y * 20); // 20px length
+            ctx.stroke();
+        }
+
+        requestAnimationFrame(loop);
+    }
+    
+    // Initialize P1/P2 in center to start
+    p1.x = window.innerWidth / 2; p1.y = window.innerHeight * 0.33;
+    p2.x = window.innerWidth / 2; p2.y = window.innerHeight * 0.66;
+
+    loop();
+</script>
+</body>
+</html>
